@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/tensorflow:24.10-tf2-py3
+FROM nvcr.io/nvidia/tensorflow:25.02-tf2-py3
 
 RUN apt-get update
 RUN ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
