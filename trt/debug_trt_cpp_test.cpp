@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <string>
 
-// TensorRTのログ出力用クラス (前回の回答と同じ)
+// TensorRTのログ出力用クラス
 class Logger : public nvinfer1::ILogger {
     void log(Severity severity, const char* msg) noexcept override {
         // Warning以上のログを出力
@@ -19,7 +19,7 @@ class Logger : public nvinfer1::ILogger {
     }
 };
 
-// ファイルからバイナリデータを読み込む関数 (前回の回答と同じ)
+// ファイルからバイナリデータを読み込む関数
 void read_file(const std::string& path, std::vector<char>& buffer) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
@@ -30,21 +30,6 @@ void read_file(const std::string& path, std::vector<char>& buffer) {
     buffer.resize(size);
     if (!file.read(buffer.data(), size)) {
         throw std::runtime_error("Error reading file: " + path);
-    }
-}
-
-// CIFAR-10画像データを読み込み、前処理する関数 (単一画像用)
-void load_and_preprocess_cifar10(const std::string& image_path, std::vector<float>& input_data, int image_size) {
-    std::vector<uint8_t> image_data(image_size);
-    std::ifstream file(image_path, std::ios::binary);
-    if (!file || !file.read(reinterpret_cast<char*>(image_data.data()), image_data.size())) {
-        throw std::runtime_error("Could not open or read image file: " + image_path);
-    }
-
-    // 0-255のuint8_tを0.0-1.0のfloatに正規化
-    input_data.resize(image_size);
-    for (size_t i = 0; i < image_data.size(); ++i) {
-        input_data[i] = static_cast<float>(image_data[i]) / 255.0f;
     }
 }
 
@@ -70,6 +55,7 @@ void load_and_preprocess_cifar10_batch(const std::string& batch_path,
     int num_images = (max_images > 0) ? std::min(max_images, total_images) : total_images;
     
     std::cout << "Loading " << num_images << " images from batch file..." << std::endl;
+    std::cout << "Expected image size: " << image_size << " pixels" << std::endl;
     
     batch_data.resize(num_images);
     labels.resize(num_images);
@@ -90,12 +76,16 @@ void load_and_preprocess_cifar10_batch(const std::string& batch_path,
             batch_data[i][j] = static_cast<float>(image_data[j]) / 255.0f;
         }
         
+        // 最初の画像のサイズをデバッグ出力
+        if (i == 0) {
+            std::cout << "First image loaded with size: " << batch_data[i].size() << std::endl;
+        }
+        
         if ((i + 1) % 1000 == 0) {
             std::cout << "Loaded " << (i + 1) << " images..." << std::endl;
         }
     }
 }
-
 
 class TrtEngine {
 public:
@@ -122,9 +112,28 @@ public:
             throw std::runtime_error("Failed to create execution context");
         }
         
-        // 4. 入出力バッファサイズの取得とCUDAメモリ割り当て
-        // TensorRT 10.x では新しいテンサーベースのAPIを使用
+        // 4. エンジンの詳細情報を出力（デバッグ用）
+        std::cout << "\n=== TensorRT Engine Information ===" << std::endl;
+        std::cout << "Number of IO tensors: " << engine_->getNbIOTensors() << std::endl;
         
+        for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
+            const char* tensor_name = engine_->getIOTensorName(i);
+            auto tensor_mode = engine_->getTensorIOMode(tensor_name);
+            auto tensor_shape = engine_->getTensorShape(tensor_name);
+            auto tensor_datatype = engine_->getTensorDataType(tensor_name);
+            
+            std::cout << "Tensor " << i << ": " << tensor_name;
+            std::cout << " [" << (tensor_mode == nvinfer1::TensorIOMode::kINPUT ? "INPUT" : "OUTPUT") << "]";
+            std::cout << " Shape: (";
+            for (int j = 0; j < tensor_shape.nbDims; ++j) {
+                std::cout << tensor_shape.d[j];
+                if (j < tensor_shape.nbDims - 1) std::cout << ", ";
+            }
+            std::cout << ")";
+            std::cout << " DataType: " << static_cast<int>(tensor_datatype) << std::endl;
+        }
+        
+        // 5. 入出力バッファサイズの取得とCUDAメモリ割り当て
         // 入力テンサー名と出力テンサー名を取得
         std::string input_name = "input_1";
         std::string output_name = "dense_1";
@@ -144,10 +153,14 @@ public:
         }
         
         if (!input_found || !output_found) {
+            std::cout << "Available tensor names:" << std::endl;
+            for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
+                std::cout << "  " << engine_->getIOTensorName(i) << std::endl;
+            }
             throw std::runtime_error("Input or output tensor not found.");
         }
 
-        // バッファサイズの計算
+        // バッファサイズの計算 (バッチサイズ1を想定)
         auto get_size = [](const nvinfer1::Dims& dims) {
             return std::accumulate(dims.d, dims.d + dims.nbDims, 1, std::multiplies<int>());
         };
@@ -155,33 +168,39 @@ public:
         auto input_shape = engine_->getTensorShape(input_name_.c_str());
         auto output_shape = engine_->getTensorShape(output_name_.c_str());
         
-        // 入力形状の解析 - バッチディメンションを正しく処理
-        if (input_shape.nbDims >= 4 && input_shape.d[0] == 1) {
-            // 形状が (1, H, W, C) の場合
-            input_size_per_image_ = input_shape.d[1] * input_shape.d[2] * input_shape.d[3];
-        } else if (input_shape.nbDims >= 2) {
-            // その他の場合、最初の次元を除いた要素数
+        // 入力形状の詳細解析
+        std::cout << "\n=== Input/Output Analysis ===" << std::endl;
+        std::cout << "Input tensor shape: (";
+        for (int i = 0; i < input_shape.nbDims; ++i) {
+            std::cout << input_shape.d[i];
+            if (i < input_shape.nbDims - 1) std::cout << ", ";
+        }
+        std::cout << ")" << std::endl;
+        
+        // バッチディメンションを除いた実際の入力サイズを計算
+        if (input_shape.nbDims > 1) {
+            // 最初の次元がバッチサイズの場合
             input_size_per_image_ = 1;
             for (int i = 1; i < input_shape.nbDims; ++i) {
                 input_size_per_image_ *= input_shape.d[i];
             }
         } else {
-            input_size_per_image_ = get_size(input_shape);
+            input_size_per_image_ = get_size(input_shape) / max_batch_size_;
         }
         
-        // 出力形状の解析
-        if (output_shape.nbDims >= 2 && output_shape.d[0] == 1) {
-            // 形状が (1, num_classes) の場合
-            output_size_per_image_ = output_shape.d[1];
-        } else if (output_shape.nbDims >= 2) {
-            // その他の場合、最初の次元を除いた要素数
+        if (output_shape.nbDims > 1) {
+            // 最初の次元がバッチサイズの場合
             output_size_per_image_ = 1;
             for (int i = 1; i < output_shape.nbDims; ++i) {
                 output_size_per_image_ *= output_shape.d[i];
             }
         } else {
-            output_size_per_image_ = get_size(output_shape);
+            output_size_per_image_ = get_size(output_shape) / max_batch_size_;
         }
+        
+        std::cout << "Calculated input size per image: " << input_size_per_image_ << std::endl;
+        std::cout << "Calculated output size per image: " << output_size_per_image_ << std::endl;
+        std::cout << "Max batch size: " << max_batch_size_ << std::endl;
         
         // CUDAデバイスメモリの割り当て（バッチサイズ分）
         cudaMalloc(&device_input_, input_size_per_image_ * max_batch_size_ * sizeof(float));
@@ -194,7 +213,6 @@ public:
         cudaFree(device_input_);
         cudaFree(device_output_);
         cudaStreamDestroy(stream_);
-        // TensorRT 8.0以降では delete を使用（nullptrチェック付き）
         if (context_) {
             delete context_;
             context_ = nullptr;
@@ -209,28 +227,6 @@ public:
         }
     }
     
-    // 単一画像推論
-    void infer(const std::vector<float>& input, std::vector<float>& output) {
-        if (input.size() != input_size_per_image_ || output.size() != output_size_per_image_) {
-             throw std::runtime_error("Input/Output buffer size mismatch.");
-        }
-        
-        // 1. Host to Device (入力データをGPUへ転送)
-        cudaMemcpyAsync(device_input_, input.data(), input_size_per_image_ * sizeof(float), cudaMemcpyHostToDevice, stream_);
-        
-        // 2. テンサーアドレスの設定（TensorRT 10.x対応）
-        context_->setTensorAddress(input_name_.c_str(), device_input_);
-        context_->setTensorAddress(output_name_.c_str(), device_output_);
-        
-        // 3. 推論の実行（TensorRT 10.x対応）
-        context_->enqueueV3(stream_);
-        
-        // 4. Device to Host (結果をCPUへ転送)
-        cudaMemcpyAsync(output.data(), device_output_, output_size_per_image_ * sizeof(float), cudaMemcpyDeviceToHost, stream_);
-        
-        cudaStreamSynchronize(stream_);
-    }
-    
     // バッチ推論
     void infer_batch(const std::vector<std::vector<float>>& batch_input, 
                      std::vector<std::vector<float>>& batch_output) {
@@ -239,10 +235,18 @@ public:
             throw std::runtime_error("Batch size exceeds maximum batch size.");
         }
         
+        std::cout << "\n=== Batch Inference Debug ===" << std::endl;
+        std::cout << "Batch size: " << batch_size << std::endl;
+        std::cout << "Expected input size per image: " << input_size_per_image_ << std::endl;
+        
         // バッチ出力サイズを設定
         batch_output.resize(batch_size);
         for (int i = 0; i < batch_size; ++i) {
+            std::cout << "Image " << i << " input size: " << batch_input[i].size() << std::endl;
             if (batch_input[i].size() != input_size_per_image_) {
+                std::cout << "ERROR: Input size mismatch!" << std::endl;
+                std::cout << "Expected: " << input_size_per_image_ << std::endl;
+                std::cout << "Actual: " << batch_input[i].size() << std::endl;
                 throw std::runtime_error("Input size mismatch for image " + std::to_string(i));
             }
             batch_output[i].resize(output_size_per_image_);
@@ -260,17 +264,12 @@ public:
                        batch_size * input_size_per_image_ * sizeof(float), 
                        cudaMemcpyHostToDevice, stream_);
         
-        // 2. バッチサイズを設定（動的形状の場合）
+        // 2. バッチサイズを設定
         auto input_shape = engine_->getTensorShape(input_name_.c_str());
         auto output_shape = engine_->getTensorShape(output_name_.c_str());
-        
-        // 入力形状の最初の次元（バッチサイズ）を更新
-        if (input_shape.d[0] == 1 || input_shape.d[0] == -1) {
-            input_shape.d[0] = batch_size;
-            if (!context_->setInputShape(input_name_.c_str(), input_shape)) {
-                throw std::runtime_error("Failed to set input shape for batch processing");
-            }
-        }
+        input_shape.d[0] = batch_size;
+        output_shape.d[0] = batch_size;
+        context_->setInputShape(input_name_.c_str(), input_shape);
         
         // 3. テンサーアドレスの設定
         context_->setTensorAddress(input_name_.c_str(), device_input_);
@@ -317,8 +316,8 @@ int main() {
         const std::string batch_path = "cifar-10-batches-bin/test_batch.bin"; 
         
         // バッチサイズとテスト画像数の設定
-        const int max_batch_size = 1; // まずバッチサイズ1でテスト
-        const int max_test_images = 10; // テスト画像数を制限
+        const int max_batch_size = 1; // デバッグのためバッチサイズを1に変更
+        const int max_test_images = 5; // テスト画像数を5に制限
         
         // CIFAR-10クラス名
         const std::vector<std::string> class_names = {
@@ -340,8 +339,6 @@ int main() {
         int correct_predictions = 0;
         int total_images = batch_data.size();
         
-        auto start_total = std::chrono::high_resolution_clock::now();
-        
         for (int batch_start = 0; batch_start < total_images; batch_start += max_batch_size) {
             int batch_end = std::min(batch_start + max_batch_size, total_images);
             int current_batch_size = batch_end - batch_start;
@@ -351,12 +348,10 @@ int main() {
                                                           batch_data.begin() + batch_end);
             std::vector<std::vector<float>> batch_output;
             
-            // バッチ推論実行
-            auto start_batch = std::chrono::high_resolution_clock::now();
-            trt_engine.infer_batch(current_batch, batch_output);
-            auto end_batch = std::chrono::high_resolution_clock::now();
+            std::cout << "\nProcessing batch starting at image " << batch_start << std::endl;
             
-            std::chrono::duration<double> batch_time = end_batch - start_batch;
+            // バッチ推論実行
+            trt_engine.infer_batch(current_batch, batch_output);
             
             // 結果の処理
             for (int i = 0; i < current_batch_size; ++i) {
@@ -369,22 +364,12 @@ int main() {
                     correct_predictions++;
                 }
                 
-                // 最初の10個の結果を詳細出力
-                if (batch_start + i < 10) {
-                    std::cout << "Image " << (batch_start + i + 1) 
-                              << ": True=" << class_names[true_label] 
-                              << ", Predicted=" << class_names[predicted_class]
-                              << (predicted_class == true_label ? " ✓" : " ✗") << std::endl;
-                }
+                std::cout << "Image " << (batch_start + i + 1) 
+                          << ": True=" << class_names[true_label] 
+                          << ", Predicted=" << class_names[predicted_class]
+                          << (predicted_class == true_label ? " ✓" : " ✗") << std::endl;
             }
-            
-            std::cout << "Batch " << (batch_start / max_batch_size + 1) 
-                      << " (" << current_batch_size << " images) processed in " 
-                      << batch_time.count() * 1000 << " ms" << std::endl;
         }
-        
-        auto end_total = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> total_time = end_total - start_total;
         
         // 最終結果の出力
         double accuracy = static_cast<double>(correct_predictions) / total_images * 100.0;
@@ -392,8 +377,6 @@ int main() {
         std::cout << "Total images: " << total_images << std::endl;
         std::cout << "Correct predictions: " << correct_predictions << std::endl;
         std::cout << "Accuracy: " << accuracy << "%" << std::endl;
-        std::cout << "Total inference time: " << total_time.count() * 1000 << " ms" << std::endl;
-        std::cout << "Average time per image: " << (total_time.count() * 1000) / total_images << " ms" << std::endl;
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
