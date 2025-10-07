@@ -228,7 +228,7 @@ public:
             if (!context_->setInputShape(input_name_.c_str(), input_shape)) {
                 throw std::runtime_error("Failed to set input shape for batch processing");
             }
-            std::cout << "Set dynamic input shape with batch size: " << batch_size << std::endl;
+            //std::cout << "Set dynamic input shape with batch size: " << batch_size << std::endl;
         }
         
         // 3. テンサーアドレスの設定
@@ -271,11 +271,11 @@ private:
 int main() {
     try {
         // ファイルパス
-        const std::string trt_engine_path = "model.trt"; 
+        const std::string trt_engine_path = "model_dynamic_batch_64.trt"; 
         const std::string batch_path = "cifar-10-batches-bin/test_batch.bin"; 
         
         // バッチサイズとテスト画像数の設定
-        const int max_batch_size = 1; // バッチサイズ1でテスト
+        const int max_batch_size = 64; // バッチサイズ64でテスト
         const int max_test_images = -1; // すべての画像を読み込み（制限なし）
         
         // CIFAR-10クラス名
