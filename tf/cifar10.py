@@ -40,6 +40,26 @@ def evaluate_model(model, test_data, test_labels):
 	print(f'Test Loss: {test_loss}, Test Accuracy: {test_accuracy}')
 	return test_loss, test_accuracy
 
+def predict_with_saved_model(model_path, test_data):
+	"""SavedModelを使って予測を実行"""
+	model = tf.keras.models.load_model(model_path)
+	predictions = model.predict(test_data)
+	return predictions
+
+def save_test_samples(x_test, y_test, num_samples=10):
+	"""テスト用サンプルを保存"""
+	import numpy as np
+	
+	# 最初のnum_samples個のサンプルを保存
+	test_samples = x_test[:num_samples]
+	test_labels = y_test[:num_samples]
+	
+	np.save('test_samples.npy', test_samples)
+	np.save('test_labels.npy', test_labels)
+	
+	print(f"Saved {num_samples} test samples to test_samples.npy and test_labels.npy")
+	return test_samples, test_labels
+
 # Example usage:
 if __name__ == "__main__":
 	# Load CIFAR-10 dataset
@@ -52,15 +72,29 @@ if __name__ == "__main__":
 	model = get_cifar10_model()
 	
 	# Train the model
-	train_model(model, x_train, y_train, epochs=10)
+	train_model(model, x_train, y_train, epochs=5)  # Reduce epochs for faster testing
 	
 	# Evaluate the model
-	evaluate_model(model, x_test, y_test)
+	test_loss, test_accuracy = evaluate_model(model, x_test, y_test)
 
 	# Save the model with SavedModel format
 	model.save('cifar10_vgg_model')
+	print("Model saved to 'cifar10_vgg_model'")
+	
+	# Save test samples for consistency check
+	test_samples, test_labels = save_test_samples(x_test, y_test, 10)
+	
+	# Test SavedModel prediction
+	saved_predictions = predict_with_saved_model('cifar10_vgg_model', test_samples)
+	original_predictions = model.predict(test_samples)
+	
+	# Verify consistency
+	import numpy as np
+	consistency_check = np.allclose(saved_predictions, original_predictions, rtol=1e-5)
+	print(f"SavedModel consistency check: {'PASSED' if consistency_check else 'FAILED'}")
+	
+	# Save predictions for later comparison
+	np.save('savedmodel_predictions.npy', saved_predictions)
+	print("SavedModel predictions saved to 'savedmodel_predictions.npy'")
 
 # Note: Ensure you have TensorFlow installed in your environment to run this code.
-# This code is designed to be run in an environment with TensorFlow installed.
-# Ensure you have TensorFlow installed in your environment to run this code.
-# This code is designed to be run in an environment with TensorFlow installed.

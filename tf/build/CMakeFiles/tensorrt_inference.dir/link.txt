@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall -Wextra -O3 CMakeFiles/tensorrt_inference.dir/tensorrt_inference.cpp.o -o tensorrt_inference   -L/usr/src/tensorrt/lib  -Wl,-rpath,/usr/src/tensorrt/lib /usr/local/cuda/lib64/libcudart_static.a -ldl /usr/lib/x86_64-linux-gnu/librt.a -lnvinfer -lnvonnxparser -lnvinfer_plugin -lcudart -lcublas -lcurand 
