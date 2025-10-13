@@ -21,12 +21,32 @@ def convert_savedmodel_to_onnx(savedmodel_path, onnx_output_path):
     
     print(f"Converting SavedModel '{savedmodel_path}' to ONNX...")
     
-    # Convert SavedModel to ONNX
-    model_proto, _ = tf2onnx.convert.from_saved_model(
-        savedmodel_path, 
-        output_path=onnx_output_path,
-        opset=13  # Use ONNX opset 13 for better TensorRT compatibility
-    )
+    # Convert SavedModel to ONNX using tf2onnx 1.16.x API
+    import subprocess
+    import sys
+    
+    print("Converting SavedModel to ONNX using command line tool...")
+    
+    # Use tf2onnx command line tool for conversion
+    cmd = [
+        sys.executable, '-m', 'tf2onnx.convert',
+        '--saved-model', savedmodel_path,
+        '--output', onnx_output_path,
+        '--opset', '13'
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        print(f"Command failed: {' '.join(cmd)}")
+        print(f"Error: {result.stderr}")
+        raise RuntimeError(f"ONNX conversion failed: {result.stderr}")
+    
+    print(f"ONNX conversion completed successfully")
+    print(f"Output: {result.stdout}")
+    
+    if not os.path.exists(onnx_output_path):
+        raise FileNotFoundError(f"ONNX file was not created: {onnx_output_path}")
     
     print(f"ONNX model saved to '{onnx_output_path}'")
     return onnx_output_path

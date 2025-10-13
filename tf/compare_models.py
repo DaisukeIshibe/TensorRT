@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Compare inference results between SavedModel, ONNX, and TensorRT models
-This script loads all three model formats and compares their predictions
+TensorRT 10.x compatible model comparison script
+Updated for TensorRT 10.11.0+ API
 """
 import os
 import numpy as np
 import tensorflow as tf
+import keras
 import onnxruntime as ort
 import tensorrt as trt
 import pycuda.driver as cuda
@@ -15,7 +16,7 @@ from tabulate import tabulate
 # TensorRT logger
 TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
 
-class ModelComparator:
+class TensorRT10ModelComparator:
     def __init__(self):
         self.savedmodel_path = 'cifar10_vgg_model'
         self.onnx_path = 'model.onnx'
@@ -46,14 +47,58 @@ class ModelComparator:
         return True
     
     def predict_savedmodel(self):
-        """Run inference with SavedModel"""
+        """SavedModelで予測を実行"""
         if not os.path.exists(self.savedmodel_path):
             print(f"❌ SavedModel not found: {self.savedmodel_path}")
             return None
         
         print("🔄 Running SavedModel inference...")
-        model = tf.keras.models.load_model(self.savedmodel_path)
-        predictions = model.predict(self.test_samples, verbose=0)
+        try:
+            # Keras 3.x compatible loading using TFSMLayer
+            model = keras.layers.TFSMLayer(self.savedmodel_path, call_endpoint='serving_default')
+            # Create a functional model for easier use
+            inputs = keras.Input(shape=(32, 32, 3))
+            outputs = model(inputs)
+            functional_model = keras.Model(inputs, outputs)
+            predictions = functional_model.predict(self.test_samples, verbose=0)
+            
+            # Handle TFSMLayer output which might be a dict
+            if isinstance(predictions, dict):
+                # Get the first output if it's a dictionary
+                key = list(predictions.keys())[0]
+                predictions = predictions[key]
+                
+        except Exception as e:
+            print(f"⚠️ TFSMLayer failed, trying low-level SavedModel API: {e}")
+            # Fallback to low-level TensorFlow SavedModel API
+            imported = tf.saved_model.load(self.savedmodel_path)
+            infer_func = imported.signatures['serving_default']
+            
+            # Convert test samples to tensor and run inference
+            test_tensor = tf.convert_to_tensor(self.test_samples, dtype=tf.float32)
+            result = infer_func(test_tensor)
+            
+            # Extract the output (assuming the output key is the model output)
+            output_key = list(result.keys())[0]
+            predictions = result[output_key].numpy()
+        
+        # Debug output shape
+        print(f"📝 SavedModel output type: {type(predictions)}")
+        if hasattr(predictions, 'shape'):
+            print(f"📝 SavedModel output shape: {predictions.shape}")
+        else:
+            print(f"📝 SavedModel output: {predictions}")
+            return None
+        
+        print(f"📝 First prediction sample: {predictions[0] if len(predictions.shape) > 1 else predictions[:5]}")
+        
+        # Ensure predictions have correct shape for CIFAR-10 (10 classes)
+        if len(predictions.shape) == 1:
+            # If 1D, reshape to (batch_size, num_classes)
+            predictions = predictions.reshape(-1, 10)
+        elif predictions.shape[-1] != 10:
+            print(f"⚠️ Unexpected output shape: {predictions.shape}, expected (batch_size, 10)")
+        
         print("✅ SavedModel inference completed")
         return predictions
     
@@ -71,71 +116,139 @@ class ModelComparator:
         print("✅ ONNX inference completed")
         return predictions
     
-    def allocate_buffers(self, engine):
-        """Allocate buffers for TensorRT inference"""
-        inputs = []
-        outputs = []
-        bindings = []
-        stream = cuda.Stream()
+    def create_simple_tensorrt_engine(self, onnx_path, trt_path):
+        """Create a simple TensorRT engine using trtexec-style approach"""
+        print("🔧 Creating TensorRT engine using Python API...")
         
-        for binding in engine:
-            binding_idx = engine.get_binding_index(binding)
-            size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
-            dtype = trt.nptype(engine.get_binding_dtype(binding))
-            
-            host_mem = cuda.pagelocked_empty(size, dtype)
-            device_mem = cuda.mem_alloc(host_mem.nbytes)
-            
-            bindings.append(int(device_mem))
-            if engine.binding_is_input(binding):
-                inputs.append({'host': host_mem, 'device': device_mem})
-            else:
-                outputs.append({'host': host_mem, 'device': device_mem})
+        builder = trt.Builder(TRT_LOGGER)
+        config = builder.create_builder_config()
         
-        return inputs, outputs, bindings, stream
-    
-    def do_inference(self, context, bindings, inputs, outputs, stream):
-        """Run TensorRT inference"""
-        [cuda.memcpy_htod_async(inp['device'], inp['host'], stream) for inp in inputs]
-        context.execute_async(batch_size=len(self.test_samples), bindings=bindings, stream_handle=stream.handle)
-        [cuda.memcpy_dtoh_async(out['host'], out['device'], stream) for out in outputs]
-        stream.synchronize()
-        return [out['host'] for out in outputs]
-    
-    def predict_tensorrt(self):
-        """Run inference with TensorRT engine"""
-        if not os.path.exists(self.tensorrt_path):
-            print(f"❌ TensorRT engine not found: {self.tensorrt_path}")
+        # Set memory pool size (replaces max_workspace_size in TensorRT 10+)
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)  # 1GB
+        
+        # Create network from ONNX
+        network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
+        parser = trt.OnnxParser(network, TRT_LOGGER)
+        
+        # Parse ONNX model
+        with open(onnx_path, 'rb') as model:
+            if not parser.parse(model.read()):
+                print("❌ Failed to parse ONNX model")
+                for error in range(parser.num_errors):
+                    print(parser.get_error(error))
+                return None
+        
+        # Get input layer and set optimization profile for dynamic shapes
+        input_tensor = network.get_input(0)
+        print(f"📝 Input tensor shape: {input_tensor.shape}")
+        
+        # Create optimization profile if needed
+        if -1 in input_tensor.shape:
+            profile = builder.create_optimization_profile()
+            # Set profile for batch dimension (assuming batch is first dimension)
+            profile.set_shape(input_tensor.name, (1, 32, 32, 3), (10, 32, 32, 3), (32, 32, 32, 3))
+            config.add_optimization_profile(profile)
+            print("✅ Added optimization profile for dynamic batch size")
+        
+        # Build engine
+        serialized_engine = builder.build_serialized_network(network, config)
+        if serialized_engine is None:
+            print("❌ Failed to build TensorRT engine")
             return None
+        
+        # Save engine
+        with open(trt_path, 'wb') as f:
+            f.write(serialized_engine)
+        
+        print(f"✅ TensorRT engine saved to {trt_path}")
+        return serialized_engine
+    
+    def predict_tensorrt_simple(self):
+        """Simple TensorRT inference using Python API"""
+        if not os.path.exists(self.tensorrt_path):
+            print(f"🔧 TensorRT engine not found. Creating from ONNX...")
+            if not os.path.exists(self.onnx_path):
+                print(f"❌ ONNX model not found: {self.onnx_path}")
+                return None
+            
+            # Create engine if it doesn't exist
+            engine_data = self.create_simple_tensorrt_engine(self.onnx_path, self.tensorrt_path)
+            if engine_data is None:
+                return None
         
         print("🔄 Running TensorRT inference...")
         
-        # Load engine
-        runtime = trt.Runtime(TRT_LOGGER)
-        with open(self.tensorrt_path, 'rb') as f:
-            engine = runtime.deserialize_cuda_engine(f.read())
-        
-        if engine is None:
-            print("❌ Failed to load TensorRT engine")
+        try:
+            # Load engine
+            runtime = trt.Runtime(TRT_LOGGER)
+            with open(self.tensorrt_path, 'rb') as f:
+                engine = runtime.deserialize_cuda_engine(f.read())
+            
+            if engine is None:
+                print("❌ Failed to load TensorRT engine")
+                return None
+            
+            # Simple approach: use execute_v2 if available
+            context = engine.create_execution_context()
+            
+            # Get input/output info
+            input_names = []
+            output_names = []
+            input_shapes = []
+            output_shapes = []
+            
+            for i in range(engine.num_io_tensors):
+                name = engine.get_tensor_name(i)
+                if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                    input_names.append(name)
+                    input_shapes.append(engine.get_tensor_shape(name))
+                else:
+                    output_names.append(name)
+                    output_shapes.append(engine.get_tensor_shape(name))
+            
+            # Prepare buffers
+            input_data = self.test_samples.astype(np.float32)
+            batch_size = len(input_data)
+            
+            # Set shapes if dynamic
+            for i, name in enumerate(input_names):
+                shape = list(input_shapes[i])
+                if shape[0] == -1:
+                    shape[0] = batch_size
+                context.set_input_shape(name, shape)
+            
+            # Allocate GPU memory
+            input_gpu = cuda.mem_alloc(input_data.nbytes)
+            
+            # Calculate output size
+            output_shape = context.get_tensor_shape(output_names[0])
+            output_size = int(np.prod(output_shape))
+            output_gpu = cuda.mem_alloc(output_size * np.float32().itemsize)
+            
+            # Copy input to GPU
+            cuda.memcpy_htod(input_gpu, input_data)
+            
+            # Set tensor addresses
+            context.set_tensor_address(input_names[0], input_gpu)
+            context.set_tensor_address(output_names[0], output_gpu)
+            
+            # Run inference
+            context.execute_async_v3(0)  # Use default stream
+            
+            # Copy output back
+            output_data = np.empty(output_shape, dtype=np.float32)
+            cuda.memcpy_dtoh(output_data, output_gpu)
+            
+            # Cleanup
+            input_gpu.free()
+            output_gpu.free()
+            
+            print("✅ TensorRT inference completed")
+            return output_data
+            
+        except Exception as e:
+            print(f"❌ TensorRT inference failed: {e}")
             return None
-        
-        # Create execution context
-        context = engine.create_execution_context()
-        
-        # Allocate buffers
-        inputs, outputs, bindings, stream = self.allocate_buffers(engine)
-        
-        # Prepare input data
-        input_data = self.test_samples.astype(np.float32).ravel()
-        np.copyto(inputs[0]['host'], input_data)
-        
-        # Run inference
-        output_data = self.do_inference(context, bindings, inputs, outputs, stream)
-        
-        # Reshape output
-        predictions = output_data[0].reshape(len(self.test_samples), -1)
-        print("✅ TensorRT inference completed")
-        return predictions
     
     def calculate_accuracy(self, predictions):
         """Calculate accuracy for predictions"""
@@ -152,14 +265,25 @@ class ModelComparator:
         if pred1 is None or pred2 is None:
             return {"max_diff": float('inf'), "mean_diff": float('inf'), "is_consistent": False}
         
+        # Ensure same shape
+        if pred1.shape != pred2.shape:
+            print(f"⚠️  Shape mismatch: {name1} {pred1.shape} vs {name2} {pred2.shape}")
+            return {"max_diff": float('inf'), "mean_diff": float('inf'), "is_consistent": False}
+        
         max_diff = np.max(np.abs(pred1 - pred2))
         mean_diff = np.mean(np.abs(pred1 - pred2))
         is_consistent = np.allclose(pred1, pred2, rtol=1e-3, atol=1e-4)
         
+        # Classification agreement
+        pred1_classes = np.argmax(pred1, axis=1)
+        pred2_classes = np.argmax(pred2, axis=1)
+        class_agreement = np.mean(pred1_classes == pred2_classes)
+        
         return {
             "max_diff": max_diff,
             "mean_diff": mean_diff,
-            "is_consistent": is_consistent
+            "is_consistent": is_consistent,
+            "class_agreement": class_agreement
         }
     
     def print_sample_predictions(self, savedmodel_pred, onnx_pred, tensorrt_pred, num_samples=5):
@@ -192,14 +316,14 @@ class ModelComparator:
         if self.test_samples is None:
             return
         
-        print("🚀 Starting model comparison...")
+        print("🚀 Starting TensorRT 10.x model comparison...")
         print(f"📝 Test samples shape: {self.test_samples.shape}")
         print("="*70)
         
         # Run predictions
         savedmodel_pred = self.predict_savedmodel()
         onnx_pred = self.predict_onnx()
-        tensorrt_pred = self.predict_tensorrt()
+        tensorrt_pred = self.predict_tensorrt_simple()
         
         # Calculate accuracies
         results = []
@@ -275,8 +399,10 @@ class ModelComparator:
 
 if __name__ == "__main__":
     try:
-        comparator = ModelComparator()
+        print(f"🔧 TensorRT Version: {trt.__version__}")
+        comparator = TensorRT10ModelComparator()
         comparator.run_comparison()
     except Exception as e:
         print(f"❌ Error during model comparison: {str(e)}")
-        raise
+        import traceback
+        traceback.print_exc()

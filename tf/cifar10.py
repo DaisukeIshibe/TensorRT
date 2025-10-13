@@ -1,7 +1,10 @@
 # Build a model for CIFAR-10 dataset with simple VGG architecture in Keras
 # This code conducts both train and evaluate the model using TensorFlow and Keras
+import os
 import tensorflow as tf
 from tensorflow.keras import layers, models
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 def create_vgg_model(input_shape, num_classes):
     model = models.Sequential()
