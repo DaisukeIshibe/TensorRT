@@ -1,0 +1,53 @@
+{
+  "fp32": {
+    "precision": "FP32",
+    "load_time": 0.03217339515686035,
+    "inference_times": [
+      0.008622884750366211,
+      0.008334159851074219,
+      0.008410930633544922,
+      0.008968114852905273,
+      0.009681224822998047
+    ],
+    "mean_time": 0.008803462982177735,
+    "std_time": 0.0005487512321456038,
+    "samples_per_second": 11359.16629654104,
+    "accuracy": 0.1,
+    "num_batches": 4,
+    "batch_size": 32
+  },
+  "fp16": {
+    "precision": "FP16",
+    "load_time": 0.013283252716064453,
+    "inference_times": [
+      0.004230022430419922,
+      0.0038263797760009766,
+      0.003566265106201172,
+      0.0034449100494384766,
+      0.0034332275390625
+    ],
+    "mean_time": 0.0037001609802246095,
+    "std_time": 0.0003357897204980554,
+    "samples_per_second": 27025.851181731487,
+    "accuracy": 0.1,
+    "num_batches": 4,
+    "batch_size": 32
+  },
+  "int8_mock": {
+    "precision": "INT8 (PyTorch)",
+    "load_time": 0.2,
+    "mean_time": 0.008,
+    "std_time": 0.001,
+    "samples_per_second": 12500.0,
+    "accuracy": 0.78,
+    "num_batches": 4,
+    "batch_size": 32,
+    "note": "Mock result - requires PyTorch implementation"
+  },
+  "comparison": {
+    "fp16_speedup": 2.3792108044021756,
+    "accuracy_difference": 0.0,
+    "load_time_speedup": 2.422102164626485,
+    "size_reduction": 1.9251549451508714
+  }
+}

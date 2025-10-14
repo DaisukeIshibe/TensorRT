@@ -1,0 +1,81 @@
+{
+  "tensorrt_fp32": {
+    "precision": "FP32",
+    "load_time": 0.03217339515686035,
+    "inference_times": [
+      0.008622884750366211,
+      0.008334159851074219,
+      0.008410930633544922,
+      0.008968114852905273,
+      0.009681224822998047
+    ],
+    "mean_time": 0.008803462982177735,
+    "std_time": 0.0005487512321456038,
+    "samples_per_second": 11359.16629654104,
+    "accuracy": 0.1,
+    "num_batches": 4,
+    "batch_size": 32
+  },
+  "tensorrt_fp16": {
+    "precision": "FP16",
+    "load_time": 0.013283252716064453,
+    "inference_times": [
+      0.004230022430419922,
+      0.0038263797760009766,
+      0.003566265106201172,
+      0.0034449100494384766,
+      0.0034332275390625
+    ],
+    "mean_time": 0.0037001609802246095,
+    "std_time": 0.0003357897204980554,
+    "samples_per_second": 27025.851181731487,
+    "accuracy": 0.1,
+    "num_batches": 4,
+    "batch_size": 32
+  },
+  "tflite_fp32": {
+    "precision": "FP32",
+    "framework": "TensorFlow Lite",
+    "load_time": 0.011995315551757812,
+    "inference_times": [
+      0.3134877681732178,
+      0.3049733638763428,
+      0.30262088775634766,
+      0.30930495262145996,
+      0.3032369613647461
+    ],
+    "mean_time": 0.30672478675842285,
+    "std_time": 0.004595366378362216,
+    "samples_per_second": 326.02516756743313,
+    "accuracy": 0.1,
+    "input_dtype": "<class 'numpy.float32'>",
+    "output_dtype": "<class 'numpy.float32'>"
+  },
+  "tflite_int8": {
+    "precision": "INT8",
+    "framework": "TensorFlow Lite",
+    "load_time": 0.0017154216766357422,
+    "inference_times": [
+      0.08601069450378418,
+      0.08698892593383789,
+      0.08556771278381348,
+      0.08606576919555664,
+      0.08636713027954102
+    ],
+    "mean_time": 0.08620004653930664,
+    "std_time": 0.0005253518468854571,
+    "samples_per_second": 1160.0921810918126,
+    "accuracy": 0.08,
+    "input_dtype": "<class 'numpy.uint8'>",
+    "output_dtype": "<class 'numpy.uint8'>"
+  },
+  "summary": {
+    "fastest_model": "TensorRT FP16",
+    "fastest_throughput": 27025.851181731487,
+    "smallest_model": "TF Lite INT8",
+    "smallest_size_mb": 3.7102279663085938,
+    "accuracy_range": 0.020000000000000004,
+    "tensorrt_fp16_speedup": 2.3792108044021756,
+    "tflite_int8_speedup": 3.5582902686549986
+  }
+}

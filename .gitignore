@@ -3,4 +3,10 @@
 *.onnx
 *.csv
 *.pb
+*.cache
+*.tflite
 variables/
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
