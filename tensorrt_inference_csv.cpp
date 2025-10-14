@@ -4,6 +4,7 @@
 #include <string>
 #include <sstream>
 #include <algorithm>
+#include <memory>
 #include <NvInfer.h>
 #include <NvOnnxParser.h>
 #include <cuda_runtime.h>
@@ -118,9 +119,9 @@ int main() {
     file.read(engineData.data(), size);
     file.close();
     
-    auto runtime = createInferRuntime(logger);
-    auto engine = runtime->deserializeCudaEngine(engineData.data(), size);
-    auto context = engine->createExecutionContext();
+    auto runtime = std::shared_ptr<IRuntime>(createInferRuntime(logger));
+    auto engine = std::shared_ptr<ICudaEngine>(runtime->deserializeCudaEngine(engineData.data(), size));
+    auto context = std::shared_ptr<IExecutionContext>(engine->createExecutionContext());
     
     cout << "✅ TensorRT engine loaded successfully" << endl;
     
@@ -160,45 +161,66 @@ int main() {
     }
     cout << endl;
     
-    // Buffer sizes (NHWC format)
-    int input_size = 1 * 32 * 32 * 3;  
-    int output_size = 10;
+    // Batch processing settings
+    const int batch_size = 32;
+    const int max_batches = min(5, (int)((test_images.size() + batch_size - 1) / batch_size)); // Process up to 5 batches
     
-    // Allocate GPU memory
+    // Buffer sizes (NHWC format) for batch processing
+    int input_size_per_sample = 32 * 32 * 3;
+    int input_size_batch = batch_size * input_size_per_sample;  
+    int output_size_per_sample = 10;
+    int output_size_batch = batch_size * output_size_per_sample;
+    
+    // Allocate GPU memory for batch processing
     float *d_input, *d_output;
-    cudaMalloc(&d_input, input_size * sizeof(float));
-    cudaMalloc(&d_output, output_size * sizeof(float));
+    cudaMalloc(&d_input, input_size_batch * sizeof(float));
+    cudaMalloc(&d_output, output_size_batch * sizeof(float));
     
-    cout << "\n🔄 Running C++ TensorRT inference with CSV test data..." << endl;
+    cout << "\n🔄 Running C++ TensorRT batch inference (batch size: " << batch_size << ") with CSV test data..." << endl;
     
     int successful_inferences = 0;
     int correct_predictions = 0;
-    vector<float> output(output_size);
+    vector<float> output_batch(output_size_batch);
     
-    for (int i = 0; i < min(5, (int)test_images.size()); i++) { // Test first 5 samples
-        // Set input shape for dynamic batch (NHWC format: [1, 32, 32, 3])
-        Dims4 inputShape{1, 32, 32, 3};
+    for (int batch_idx = 0; batch_idx < max_batches; batch_idx++) {
+        int start_idx = batch_idx * batch_size;
+        int end_idx = min(start_idx + batch_size, (int)test_images.size());
+        int current_batch_size = end_idx - start_idx;
+        
+        cout << "\nProcessing batch " << (batch_idx + 1) << "/" << max_batches 
+             << " (samples " << start_idx << "-" << (end_idx - 1) << ")" << endl;
+        
+        // Prepare batch input data
+        vector<float> input_batch(current_batch_size * input_size_per_sample);
+        for (int i = 0; i < current_batch_size; i++) {
+            const auto& sample = test_images[start_idx + i];
+            copy(sample.begin(), sample.end(), 
+                 input_batch.begin() + i * input_size_per_sample);
+        }
+        
+        // Set input shape for dynamic batch (NHWC format: [current_batch_size, 32, 32, 3])
+        Dims4 inputShape{current_batch_size, 32, 32, 3};
         if (!context->setInputShape(input_name.c_str(), inputShape)) {
-            cerr << "Error: Failed to set input shape for sample " << (i + 1) << endl;
+            cerr << "Error: Failed to set input shape for batch " << (batch_idx + 1) << endl;
             continue;
         }
         
         // Copy input data to GPU
-        cudaMemcpy(d_input, test_images[i].data(), input_size * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_input, input_batch.data(), current_batch_size * input_size_per_sample * sizeof(float), cudaMemcpyHostToDevice);
         
         // Set tensor addresses
         if (!context->setTensorAddress(input_name.c_str(), d_input)) {
-            cerr << "Error: Failed to set input tensor address for sample " << (i + 1) << endl;
+            cerr << "Error: Failed to set input tensor address for batch " << (batch_idx + 1) << endl;
             continue;
         }
         if (!context->setTensorAddress(output_name.c_str(), d_output)) {
-            cerr << "Error: Failed to set output tensor address for sample " << (i + 1) << endl;
+            cerr << "Error: Failed to set output tensor address for batch " << (batch_idx + 1) << endl;
             continue;
         }
         
         // Run inference
         if (!context->enqueueV3(0)) {
-            cerr << "Error: Failed to run inference for sample " << (i + 1) << endl;
+            cerr << "Error: Failed to run inference for batch " << (batch_idx + 1) << endl;
             continue;
         }
         
@@ -206,47 +228,54 @@ int main() {
         cudaDeviceSynchronize();
         
         // Copy output back to CPU
-        cudaMemcpy(output.data(), d_output, output_size * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(output_batch.data(), d_output, current_batch_size * output_size_per_sample * sizeof(float), cudaMemcpyDeviceToHost);
         
-        // Find predicted class
-        int predicted_class = 0;
-        float max_prob = output[0];
-        for (int j = 1; j < output_size; j++) {
-            if (output[j] > max_prob) {
-                max_prob = output[j];
-                predicted_class = j;
+        // Process results for each sample in the batch
+        for (int i = 0; i < current_batch_size; i++) {
+            int sample_idx = start_idx + i;
+            vector<float> sample_output(output_batch.begin() + i * output_size_per_sample, 
+                                       output_batch.begin() + (i + 1) * output_size_per_sample);
+            
+            // Find predicted class
+            int predicted_class = 0;
+            float max_prob = sample_output[0];
+            for (int j = 1; j < output_size_per_sample; j++) {
+                if (sample_output[j] > max_prob) {
+                    max_prob = sample_output[j];
+                    predicted_class = j;
+                }
             }
+            
+            cout << "Sample " << (sample_idx + 1) << " - True: " << test_labels[sample_idx].second 
+                 << " | Predicted: " << cifar10_classes[predicted_class] 
+                 << " (confidence: " << max_prob << ")";
+            
+            if (predicted_class == test_labels[sample_idx].first) {
+                cout << " ✅ CORRECT";
+                correct_predictions++;
+            } else {
+                cout << " ❌ WRONG";
+            }
+            cout << endl;
+            
+            successful_inferences++;
         }
-        
-        cout << "Sample " << (i + 1) << " - True: " << test_labels[i].second 
-             << " | Predicted: " << cifar10_classes[predicted_class] 
-             << " (confidence: " << max_prob << ")";
-        
-        if (predicted_class == test_labels[i].first) {
-            cout << " ✅ CORRECT";
-            correct_predictions++;
-        } else {
-            cout << " ❌ WRONG";
-        }
-        cout << endl;
-        
-        successful_inferences++;
     }
     
-    cout << "\n📊 Results Summary:" << endl;
-    cout << "✅ C++ TensorRT Inference completed successfully!" << endl;
-    cout << "🎯 Successful inferences: " << successful_inferences << "/5" << endl;
+    cout << "\n📊 Batch Processing Results Summary:" << endl;
+    cout << "✅ C++ TensorRT Batch Inference completed successfully!" << endl;
+    cout << "🎯 Batch size: " << batch_size << endl;
+    cout << "🎯 Batches processed: " << max_batches << endl;
+    cout << "🎯 Successful inferences: " << successful_inferences << "/" << min((int)test_images.size(), max_batches * batch_size) << endl;
     cout << "🎯 Correct predictions: " << correct_predictions << "/" << successful_inferences 
          << " (" << (100.0 * correct_predictions / successful_inferences) << "%)" << endl;
     
     // Cleanup
     cudaFree(d_input);
     cudaFree(d_output);
-    delete context;
-    delete engine;
-    delete runtime;
+    // Smart pointers will automatically handle cleanup
     
     cout << "🧹 Cleanup completed" << endl;
-    cout << "\n🎉 CSV-compatible C++ TensorRT verification completed!" << endl;
+    cout << "\n🎉 CSV-compatible C++ TensorRT batch inference verification completed!" << endl;
     return 0;
 }
