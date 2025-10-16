@@ -48,7 +48,7 @@ cifar10.py                    # CIFAR-10モデル訓練
 convert_to_onnx.py           # ONNX変換
 convert_to_tensorrt.py       # TensorRT変換 (汎用)
 convert_to_tensorrt_batch.py # バッチ最適化TensorRT
-generate_trt8x_engine.py     # TensorRT 8.x専用エンジン
+generate_trt8x_engine.py     # TensorRT 8.x精度別エンジン (FP32/FP16/INT8対応)
 ```
 
 ### 🚀 推論・検証プログラム
@@ -93,9 +93,13 @@ docker run --gpus all --rm -v $(pwd):/workspace -w /workspace \
 docker run --gpus all --rm -v $(pwd):/workspace -w /workspace \
   nvcr.io/nvidia/tensorflow:25.02-tf2-py3 python3 convert_to_onnx.py
 
-# バッチ最適化TensorRTエンジン生成
+# TensorRT 10.x バッチ最適化エンジン生成  
 docker run --gpus all --rm -v $(pwd):/workspace -w /workspace \
   nvcr.io/nvidia/tensorrt:25.06-py3 python3 convert_to_tensorrt_batch.py
+
+# TensorRT 8.x 精度別エンジン生成 (FP32/FP16対応)
+docker run --gpus all --rm -v $(pwd):/workspace -w /workspace \
+  nvcr.io/nvidia/tensorrt:23.03-py3 python3 generate_trt8x_engine.py --all
 ```
 
 ### 3. 性能比較実行

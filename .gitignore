@@ -1,6 +1,6 @@
 *.npy
-# *.trt
-*.onnx
+*.trt
+# *.onnx
 *.csv
 *.pb
 *.cache
