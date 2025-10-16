@@ -668,51 +668,272 @@ GPU転送: [Batch1(32samples)] → 推論 → [Batch2(32samples)] → 推論 →
 GPU利用率: 連続的、高効率
 ```
 
-#### 重要な技術的進歩
-1. **スケーラビリティ**: 1〜32サンプルまでの動的対応
-2. **メモリ最適化**: バッチ単位でのGPUメモリ管理
-3. **API進化**: TensorRT 10.x動的バッチ機能の完全活用
-4. **プロダクション対応**: 実用的なバッチサイズでの高性能推論
+## 📊 総合性能比較
 
-## 今後の改善点 - バッチ処理対応版
+| モデル形式 | 推論時間 (100サンプル) | スループット (samples/sec) | ロード時間 | 備考 |
+|------------|-------------------------|---------------------------|------------|------|
+| **SavedModel** | 0.180s ± 0.240s | 555.6 | 2.677s | TensorFlow |
+| **ONNX** | 0.012s ± 0.005s | 8,556.7 | 0.153s | 最高速 |
+| **TensorRT Batch** | 0.0118s ± 0.0002s | **8,483.2** | 0.121s | **最適化** |
+| **TensorRT Single** | 0.1199s (scaled) | 834.3 | 0.121s | 単一処理 |
 
-### 🚀 パフォーマンス測定の強化
-- **推論時間の詳細ベンチマーク**: Python vs C++ (バッチサイズ別)
-- **メモリ効率の分析**: バッチサイズ1, 16, 32での比較
-- **GPU利用率測定**: バッチ処理による連続使用効果
-- **スループット測定**: samples/second での性能比較
-- **エネルギー効率**: バッチ処理による電力削減効果
+## 🏆 性能向上率
 
-### 📈 バッチサイズ最適化の深掘り
-- **動的バッチサイズ調整**: リアルタイムでの最適バッチサイズ決定
-- **より大きなバッチサイズ**: 64, 128サンプルでの検証
-- **混合精度推論**: FP16での高速化テスト
-- **マルチストリーム**: 並列ストリームでの更なる高速化
+### 1. ONNX vs SavedModel
+- **15.4倍高速** (555.6 → 8,556.7 samples/sec)
+- ロード時間17.8倍改善 (2.677s → 0.153s)
 
-### 🔧 モデル拡張
-- **より複雑なモデル**: ResNet, EfficientNet等でのバッチ処理検証
-- **異なるデータセット**: ImageNet, COCO等での大規模テスト  
-- **動的形状モデル**: 可変入力サイズでのバッチ処理
-- **マルチ入力モデル**: 複数テンソル入力でのバッチ対応
+### 2. TensorRT Batch vs SavedModel
+- **15.3倍高速** (555.6 → 8,483.2 samples/sec)
+- ロード時間22.1倍改善 (2.677s → 0.121s)
 
-### 🌐 デプロイメント最適化
-- **プロダクション環境**: Kubernetes での自動スケーリング対応
-- **マルチGPU対応**: 複数GPUでのバッチ分散処理
-- **分散推論**: クラスター環境での大規模バッチ処理
-- **推論サーバー実装**: REST APIでのバッチ推論サービス
+### 3. TensorRT Batch vs Single
+- **10.2倍高速** (834.3 → 8,483.2 samples/sec)
+- GPU転送回数96%削減 (100回 → 4回)
 
-### 📊 監視・メトリクス強化
-- **リアルタイム監視**: GPU使用率、メモリ使用量、推論レイテンシ
-- **性能プロファイリング**: CUDA Profilerでの詳細分析
-- **ボトルネック特定**: バッチ処理での律速段階の特定
-- **自動調整**: 負荷に応じたバッチサイズ自動調整
+## 📈 バッチ処理の効果
 
----
+### GPU転送最適化
+```
+単一処理: 100サンプル = 100回のGPU転送
+バッチ処理: 100サンプル = 4回のGPU転送 (32サンプル/バッチ)
+削減率: 96%
+```
 
-**作成日**: 2025年10月13日  
-**最終更新**: 2025年10月14日 (バッチ処理対応完了)  
-**TensorRT Version**: 10.11.0  
-**TensorFlow Version**: 2.17.0  
-**検証ステータス**: ✅ **完全成功** - Python/C++全パイプラインで一貫した結果を確認  
-**一致性検証**: ✅ **6桁精度まで完全一致** - CSV形式データ交換により実証  
-**バッチ処理**: ✅ **バッチサイズ32対応完了** - GPU転送回数96%削減、高効率推論を実現
+### メモリ効率
+- バッチサイズ32で最適化
+- 動的バッチサイズ対応 (min=1, opt=16, max=32)
+- スマートポインタによる安全なメモリ管理
+
+## 🔧 技術仕様
+
+### TensorRT設定
+- **バージョン**: 10.11.0.33
+- **最適化プロファイル**: 
+  - Minimum batch size: 1
+  - Optimal batch size: 16  
+  - Maximum batch size: 32
+- **精度**: FP32
+
+### 測定環境
+- **Docker**: nvidia/tensorrt:25.06-py3
+- **GPU**: CUDA対応GPU
+- **測定回数**: 各5回の平均値
+
+## 📝 結論
+
+1. **ONNX**: 最も高いスループット (8,556.7 samples/sec)
+2. **TensorRT Batch**: ONNXに匹敵する高速性能 (8,483.2 samples/sec) + GPU最適化
+3. **バッチ処理**: 単一処理より10.2倍高速、GPU転送96%削減
+4. **SavedModel**: 基準値 (555.6 samples/sec)
+
+### 推奨用途
+- **高速推論が必要**: ONNX or TensorRT Batch
+- **GPU最適化重視**: TensorRT Batch
+- **開発・プロトタイプ**: SavedModel
+- **本番環境**: TensorRT Batch (メモリ効率+高速性)
+
+## 📊 バージョン横断比較結果
+
+### 測定環境
+- **実施日**: 2025年10月16日
+- **TensorRT 8.x環境**: Docker nvcr.io/nvidia/tensorrt:23.03-py3 (TensorRT 8.5.3)
+- **TensorRT 10.x環境**: Docker nvcr.io/nvidia/tensorrt:25.06-py3 (TensorRT 10.11.0)
+- **GPU**: NVIDIA GeForce RTX 3050 Ti Laptop GPU
+- **テストデータ**: CIFAR-10 (100サンプル、バッチサイズ32)
+
+## 📈 性能比較表
+
+| バージョン | フレームワーク | 推論時間 (s) | スループット (samples/sec) | エンジンサイズ (MB) | API特徴 |
+|------------|--------------|-------------|---------------------------|-------------------|---------|
+| **TensorRT 8.x** | C++ | 0.0119 | **8,382.6** | 15.7 | Legacy API |
+| **TensorRT 10.x** | C++ | 0.0118 | **8,483.2** | 4.5 | Modern API |
+
+## 🔧 技術的差異分析
+
+### 1. API進化の違い
+
+#### TensorRT 8.x (Legacy API)
+```cpp
+// エンジン作成
+engine = runtime->deserializeCudaEngine(data, size, nullptr);
+
+// バインディング取得
+inputIndex = engine->getBindingIndex("input_1");
+outputIndex = engine->getBindingIndex("dense_1");
+
+// 実行
+void* bindings[] = {deviceInputBuffer, deviceOutputBuffer};
+context->execute(batchSize, bindings);
+// または
+context->executeV2(bindings);
+```
+
+#### TensorRT 10.x (Modern API)
+```cpp
+// エンジン作成
+engine = runtime->deserialize_cuda_engine(data.data(), size);
+
+// テンソル取得
+for (int i = 0; i < engine.num_io_tensors):
+    name = engine.get_tensor_name(i)
+    mode = engine.get_tensor_mode(name)
+
+// 実行
+context.set_tensor_address(input_name, input_gpu)
+context.set_tensor_address(output_name, output_gpu)
+context.execute_async_v3(0)
+```
+
+### 2. メモリ管理の改善
+
+#### TensorRT 8.x
+- **手動バインディング配列**: `void* bindings[]`
+- **インデックス管理**: `getBindingIndex()`
+- **レガシー実行**: `execute()` / `executeV2()`
+
+#### TensorRT 10.x
+- **名前ベースアドレス設定**: `set_tensor_address()`
+- **現代的API**: より直感的なインターフェース
+- **非同期実行**: `execute_async_v3()`
+
+## 🏆 性能分析
+
+### 速度比較
+- **TensorRT 10.x**: 8,483.2 samples/sec
+- **TensorRT 8.x**: 8,382.6 samples/sec
+- **性能差**: 1.2% 向上 (TensorRT 10.x有利)
+
+### エンジンサイズ効率
+- **TensorRT 10.x**: 4.5 MB (73% 削減)
+- **TensorRT 8.x**: 15.7 MB (基準サイズ)
+- **最適化**: 3.5倍のサイズ削減
+
+### レイテンシ特性
+```
+TensorRT 8.x:  0.0119s ± 0.0002s
+TensorRT 10.x: 0.0118s ± 0.0002s
+改善: 0.8% のレイテンシ減少
+```
+
+## 🔍 実装の互換性分析
+
+### コード移植の要点
+
+#### 1. エンジンローディング
+```cpp
+// 8.x 
+engine.reset(runtime->deserializeCudaEngine(data, size, nullptr));
+
+// 10.x
+engine = runtime.deserialize_cuda_engine(data.data(), size);
+```
+
+#### 2. テンソル管理
+```cpp
+// 8.x - インデックスベース
+int inputIndex = engine->getBindingIndex("input_1");
+Dims inputDims = engine->getBindingDimensions(inputIndex);
+
+// 10.x - 名前ベース  
+for i in range(engine.num_io_tensors):
+    name = engine.get_tensor_name(i)
+    if engine.get_tensor_mode(name) == TensorIOMode.INPUT:
+        input_names.append(name)
+```
+
+#### 3. 実行パターン
+```cpp
+// 8.x - バインディング配列
+void* bindings[] = {deviceInput, deviceOutput};
+context->executeV2(bindings);
+
+// 10.x - アドレス設定
+context.set_tensor_address(input_name, input_gpu);
+context.set_tensor_address(output_name, output_gpu);  
+context.execute_async_v3(0);
+```
+
+## 📋 バッチ処理効果の一貫性
+
+### GPU転送最適化
+両バージョンで同様の効果を確認：
+
+```
+バッチ処理効果:
+- バッチ数: 4 (vs 100 単一処理)
+- GPU転送削減: 96%
+- メモリ効率: 大幅改善
+```
+
+### パフォーマンス特性
+```
+共通の最適化効果:
+✅ 動的バッチサイズ対応
+✅ CUDA メモリ最適化
+✅ パイプライン処理効率
+✅ GPU ワークロード並列化
+```
+
+## 🎯 移行推奨事項
+
+### 1. **新規開発**: TensorRT 10.x推奨
+- **理由**: 現代的API、エンジンサイズ削減、性能向上
+- **特徴**: より直感的なプログラミングモデル
+
+### 2. **既存システム維持**: TensorRT 8.x継続可能
+- **理由**: 安定動作確認済み、十分な性能
+- **考慮**: セキュリティアップデート状況
+
+### 3. **段階的移行**: APIラッパー活用
+```cpp
+// 共通インターフェース設計例
+class TensorRTInferenceWrapper {
+    // 8.x/10.x 両対応
+    virtual bool loadEngine(const string& path) = 0;
+    virtual vector<vector<float>> predict(const vector<vector<float>>& input) = 0;
+};
+```
+
+## 🔧 実装確認事項
+
+### ✅ TensorRT 8.x 検証完了
+- ✅ C++コンパイル成功
+- ✅ エンジンロード成功
+- ✅ バッチ推論動作確認
+- ✅ 性能測定完了
+- ✅ レガシーAPI動作確認
+
+### ✅ TensorRT 10.x 検証済み
+- ✅ 現代的API実装済み
+- ✅ エンジン最適化確認済み
+- ✅ バッチ処理効率化済み
+- ✅ 高精度最適化済み
+
+## 📝 総合評価
+
+### パフォーマンス
+- **速度**: TensorRT 10.x が僅かに優位 (1.2%)
+- **効率**: エンジンサイズで10.x が大幅優位 (73%削減)
+- **安定性**: 両バージョンとも高い安定性
+
+### 開発体験
+- **TensorRT 10.x**: より現代的で直感的なAPI
+- **TensorRT 8.x**: 成熟したレガシーAPI、豊富な情報
+
+### 推奨判断
+```
+新規プロジェクト → TensorRT 10.x
+├── 最新機能活用
+├── エンジンサイズ最適化  
+└── 長期サポート期待
+
+既存プロジェクト → 現状維持 or 段階移行
+├── 安定動作継続
+├── コスト効率考慮
+└── 必要に応じて移行検討
+```
+
+## 🚀 結論
+
+**両バージョンとも優秀な性能**を示し、**バッチ処理による大幅な効率化**を確認しました。TensorRT 10.xは僅かな性能向上とエンジンサイズの大幅削減を実現していますが、TensorRT 8.xも十分実用的な性能を提供します。
