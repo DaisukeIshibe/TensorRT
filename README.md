@@ -129,15 +129,6 @@ docker run --gpus all --rm -v $(pwd):/workspace -w /workspace \
 - エンジンサイズ: 71%削減 (10.x有利)
 - API: 10.xでより直感的なインターフェース
 
-## 📋 詳細ドキュメント
-
-| ドキュメント | 内容 |
-|-------------|------|
-| `PERFORMANCE_RESULTS.md` | SavedModel/ONNX/TensorRT性能比較 |
-| `PRECISION_COMPARISON_REPORT.md` | FP32/FP16/INT8精度別比較 |
-| `TENSORRT_COMPLETE_PRECISION_REPORT.md` | TensorRT専用精度最適化 |
-| `TENSORRT_8x_vs_10x_COMPARISON.md` | バージョン横断比較 |
-
 ## 🎯 技術的ハイライト
 
 ### バッチ処理最適化

@@ -129,15 +129,6 @@ docker run --gpus all --rm -v $(pwd):/workspace -w /workspace \
 - Engine size: 71% reduction (10.x advantage)
 - API: More intuitive interface in 10.x
 
-## 📋 Detailed Documentation
-
-| Document | Content |
-|----------|---------|
-| `PERFORMANCE_RESULTS.md` | SavedModel/ONNX/TensorRT performance comparison |
-| `PRECISION_COMPARISON_REPORT.md` | FP32/FP16/INT8 precision-specific comparison |
-| `TENSORRT_COMPLETE_PRECISION_REPORT.md` | TensorRT-specific precision optimization |
-| `TENSORRT_8x_vs_10x_COMPARISON.md` | Cross-version comparison |
-
 ## 🎯 Technical Highlights
 
 ### Batch Processing Optimization
